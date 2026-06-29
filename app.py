@@ -15,8 +15,9 @@ import streamlit as st
 st.set_page_config(
     page_title="Basketball Performance Readiness Dashboard",
     page_icon="",
-    layout="wide"
+    layout="wide",
 )
+
 st.markdown("""
 <style>
 .report-card {
@@ -45,79 +46,304 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def report_card(title, value):
+    st.markdown(
+        f"""
+        <div class="report-card">
+            <div class="report-card-title">{title}</div>
+            <div class="report-card-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 # ------------------------------------------------------------
-# Styling
+# Styling - Orange / Charcoal Glassmorphism UI
 # ------------------------------------------------------------
 
 st.markdown(
     """
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        :root {
+            --bg-main: #101010;
+            --bg-panel: rgba(41, 41, 41, 0.72);
+            --bg-panel-strong: rgba(41, 41, 41, 0.92);
+            --orange: #F47A3A;
+            --orange-soft: rgba(244, 122, 58, 0.18);
+            --orange-border: rgba(244, 122, 58, 0.55);
+            --text-main: #F7F7F7;
+            --text-muted: #B8B8B8;
+            --border-glass: rgba(255, 255, 255, 0.12);
+            --shadow-glass: 0 18px 45px rgba(0, 0, 0, 0.38);
+        }
+
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif !important;
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at top left, rgba(244, 122, 58, 0.20), transparent 32%),
+                radial-gradient(circle at bottom right, rgba(244, 122, 58, 0.12), transparent 30%),
+                linear-gradient(135deg, #101010 0%, #171717 45%, #292929 100%);
+            color: var(--text-main);
+        }
+
+        section[data-testid="stSidebar"] {
+            background: rgba(16, 16, 16, 0.82) !important;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border-right: 1px solid var(--border-glass);
+        }
+
+        section[data-testid="stSidebar"] > div {
+            background: transparent !important;
+        }
+
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] p {
+            color: var(--text-main) !important;
+            font-weight: 600 !important;
+        }
+
+        .block-container {
+            padding-top: 3rem;
+            padding-bottom: 3rem;
+            max-width: 1280px;
+        }
+
         .main-title {
-            font-size: 38px;
+            font-size: 42px;
             font-weight: 800;
-            margin-bottom: 0px;
+            letter-spacing: -1.2px;
+            margin-bottom: 6px;
+            color: var(--text-main);
+            text-shadow: 0 3px 18px rgba(0, 0, 0, 0.45);
+        }
+
+        .main-title::after {
+            content: "";
+            display: block;
+            width: 90px;
+            height: 4px;
+            margin-top: 14px;
+            border-radius: 20px;
+            background: linear-gradient(90deg, var(--orange), rgba(244, 122, 58, 0.15));
         }
 
         .subtitle {
             font-size: 17px;
-            color: #666666;
-            margin-bottom: 25px;
+            color: var(--text-muted);
+            margin-bottom: 30px;
+            font-weight: 500;
         }
 
-        .score-card {
-            padding: 22px;
-            border-radius: 14px;
-            background-color: #111827;
-            color: white;
-            text-align: center;
-            margin-bottom: 15px;
+        h1, h2, h3, h4 {
+            color: var(--text-main) !important;
+            letter-spacing: -0.4px;
         }
 
-        .score-number {
-            font-size: 46px;
-            font-weight: 800;
-            margin-bottom: 5px;
+        p, span, label, div {
+            color: inherit;
         }
 
-        .score-label {
-            font-size: 18px;
+        div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stMetric"]) {
+            background: rgba(41, 41, 41, 0.62);
+            border: 1px solid var(--border-glass);
+            border-radius: 18px;
+            padding: 14px 16px;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: var(--shadow-glass);
+        }
+
+        div[data-testid="stMetric"] {
+            background: transparent;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            color: var(--text-muted) !important;
             font-weight: 600;
         }
 
+        div[data-testid="stMetricValue"] {
+            color: var(--text-main) !important;
+            font-weight: 800;
+            letter-spacing: -0.8px;
+        }
+
+        .score-card {
+            padding: 24px;
+            border-radius: 20px;
+            background:
+                linear-gradient(145deg, rgba(244, 122, 58, 0.24), rgba(41, 41, 41, 0.72));
+            color: var(--text-main);
+            text-align: center;
+            margin-bottom: 16px;
+            border: 1px solid var(--orange-border);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: var(--shadow-glass);
+        }
+
+        .score-number {
+            font-size: 52px;
+            font-weight: 800;
+            margin-bottom: 5px;
+            color: var(--orange);
+            text-shadow: 0 0 18px rgba(244, 122, 58, 0.35);
+        }
+
+        .score-label {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .green-box,
+        .amber-box,
+        .red-box,
+        .info-box {
+            padding: 18px 20px;
+            border-radius: 18px;
+            margin-bottom: 16px;
+            background: rgba(41, 41, 41, 0.68);
+            border: 1px solid var(--border-glass);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: var(--shadow-glass);
+            color: var(--text-main);
+        }
+
         .green-box {
-            padding: 18px;
-            border-radius: 12px;
-            background-color: #dcfce7;
-            border-left: 6px solid #22c55e;
-            color: #14532d;
-            margin-bottom: 15px;
+            border-left: 6px solid #33D17A;
         }
 
         .amber-box {
-            padding: 18px;
-            border-radius: 12px;
-            background-color: #fef3c7;
-            border-left: 6px solid #f59e0b;
-            color: #78350f;
-            margin-bottom: 15px;
+            border-left: 6px solid var(--orange);
         }
 
         .red-box {
-            padding: 18px;
-            border-radius: 12px;
-            background-color: #fee2e2;
-            border-left: 6px solid #ef4444;
-            color: #7f1d1d;
-            margin-bottom: 15px;
+            border-left: 6px solid #FF4D4D;
         }
 
         .info-box {
-            padding: 18px;
-            border-radius: 12px;
-            background-color: #e0f2fe;
-            border-left: 6px solid #0284c7;
-            color: #0c4a6e;
-            margin-bottom: 15px;
+            border-left: 6px solid var(--orange);
+            background: linear-gradient(145deg, rgba(244, 122, 58, 0.16), rgba(41, 41, 41, 0.70));
+        }
+
+        .green-box b,
+        .amber-box b,
+        .red-box b,
+        .info-box b {
+            color: var(--orange);
+        }
+
+        .report-card {
+            background:
+                linear-gradient(145deg, rgba(41, 41, 41, 0.78), rgba(16, 16, 16, 0.72));
+            border: 1px solid var(--border-glass);
+            border-radius: 18px;
+            padding: 18px 20px;
+            margin-bottom: 14px;
+            min-height: 120px;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: var(--shadow-glass);
+        }
+
+        .report-card-title {
+            font-size: 15px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .report-card-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--text-main);
+            line-height: 1.2;
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            overflow-wrap: break-word !important;
+        }
+
+        div[data-testid="stDataFrame"] {
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid var(--border-glass);
+            box-shadow: var(--shadow-glass);
+        }
+
+        div[data-testid="stTable"] {
+            border-radius: 18px;
+            overflow: hidden;
+        }
+
+        .stSelectbox > div > div,
+        .stMultiSelect > div > div,
+        .stTextInput > div > div,
+        .stNumberInput > div > div {
+            background: rgba(41, 41, 41, 0.72) !important;
+            border: 1px solid var(--border-glass) !important;
+            border-radius: 14px !important;
+            color: var(--text-main) !important;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .stSelectbox div,
+        .stSlider div,
+        .stFileUploader div {
+            color: var(--text-main);
+        }
+
+        div[data-baseweb="select"] > div {
+            background: rgba(41, 41, 41, 0.72) !important;
+            border: 1px solid var(--border-glass) !important;
+            border-radius: 14px !important;
+            color: var(--text-main) !important;
+        }
+
+        div[data-baseweb="select"] span {
+            color: var(--text-main) !important;
+        }
+
+        .stSlider [data-baseweb="slider"] div {
+            color: var(--orange) !important;
+        }
+
+        .stSlider [role="slider"] {
+            background-color: var(--orange) !important;
+            border: 2px solid #FFB083 !important;
+        }
+
+        .stSlider div[data-testid="stTickBar"] {
+            background: rgba(255, 255, 255, 0.18) !important;
+        }
+
+        button[kind="primary"],
+        button[kind="secondary"],
+        .stButton button {
+            background: linear-gradient(135deg, var(--orange), #D95F24) !important;
+            color: white !important;
+            border: 1px solid rgba(255, 255, 255, 0.16) !important;
+            border-radius: 14px !important;
+            font-weight: 700 !important;
+            box-shadow: 0 12px 28px rgba(244, 122, 58, 0.25);
+        }
+
+        button:hover,
+        .stButton button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 36px rgba(244, 122, 58, 0.36);
         }
 
         .fixed-download {
@@ -125,25 +351,97 @@ st.markdown(
             top: 72px;
             right: 28px;
             z-index: 999999;
-            background-color: #111827;
-            color: white !important;
-            padding: 10px 16px;
-            border-radius: 8px;
+            background: rgba(41, 41, 41, 0.78);
+            color: var(--text-main) !important;
+            padding: 11px 17px;
+            border-radius: 14px;
             text-decoration: none;
-            font-weight: 700;
-            border: 1px solid #374151;
+            font-weight: 800;
+            border: 1px solid var(--orange-border);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: var(--shadow-glass);
         }
 
         .fixed-download:hover {
-            background-color: #1f2937;
+            background: linear-gradient(135deg, var(--orange), #D95F24);
             color: white !important;
             text-decoration: none;
         }
+
+        div[data-testid="stAlert"] {
+            background: rgba(41, 41, 41, 0.74);
+            color: var(--text-main);
+            border-radius: 16px;
+            border: 1px solid var(--orange-border);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+
+        div[data-testid="stExpander"] {
+            background: rgba(41, 41, 41, 0.62);
+            border: 1px solid var(--border-glass);
+            border-radius: 16px;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+
+        iframe {
+            border-radius: 18px !important;
+        }
+
+        .js-plotly-plot {
+            border-radius: 18px;
+            background: rgba(41, 41, 41, 0.42);
+            border: 1px solid var(--border-glass);
+            padding: 10px;
+            box-shadow: var(--shadow-glass);
+        }
+
+        hr {
+            border-color: rgba(244, 122, 58, 0.35);
+        }
+        /* Fix metric text clipping */
+div[data-testid="stMetric"] {
+    width: 100% !important;
+    overflow: visible !important;
+}
+
+div[data-testid="stMetric"] > div {
+    overflow: visible !important;
+}
+
+div[data-testid="stMetricLabel"] {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+}
+
+div[data-testid="stMetricValue"] {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    line-height: 1.15 !important;
+    font-size: clamp(24px, 2.2vw, 38px) !important;
+    max-width: 100% !important;
+}
+
+div[data-testid="stMetricValue"] > div {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    line-height: 1.15 !important;
+}
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
-
 
 # ------------------------------------------------------------
 # Data loading
@@ -171,14 +469,6 @@ def load_default_data() -> pd.DataFrame:
 
 @st.cache_data
 def load_team_name_lookup() -> dict:
-    """
-    Load team names from project files instead of using hardcoded abbreviations.
-    Priority:
-    1. Data/raw/teams.csv
-    2. Data/raw/games_details.csv
-    3. fallback to abbreviation only
-    """
-
     team_lookup = {}
 
     teams_paths = [
@@ -279,8 +569,7 @@ def validate_data(df: pd.DataFrame) -> list:
         "Result",
     ]
 
-    missing = [col for col in required_columns if col not in df.columns]
-    return missing
+    return [col for col in required_columns if col not in df.columns]
 
 
 def prepare_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -603,16 +892,7 @@ def fixed_download_link(data: bytes, file_name: str, label: str = "Download CSV"
 
     st.markdown(href, unsafe_allow_html=True)
 
-def report_card(title, value):
-    st.markdown(
-        f"""
-        <div class="report-card">
-            <div class="report-card-title">{title}</div>
-            <div class="report-card-value">{value}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+
 # ------------------------------------------------------------
 # Team and player summaries
 # ------------------------------------------------------------
@@ -1093,7 +1373,6 @@ if missing_columns:
     st.stop()
 
 data = prepare_data(data)
-
 team_name_lookup = load_team_name_lookup()
 
 
@@ -1621,6 +1900,10 @@ elif tool_mode == "Pre-Game Readiness":
 # Mode: Live Game Monitor
 # ------------------------------------------------------------
 
+# ------------------------------------------------------------
+# Mode: Live Game Monitor
+# ------------------------------------------------------------
+
 elif tool_mode == "Live Game Monitor":
     st.subheader("Live Game Monitor Mode")
     st.write(
@@ -1628,20 +1911,23 @@ elif tool_mode == "Live Game Monitor":
         "It is designed for practical coach-facing use during a game."
     )
 
-    col1, col2, col3 = st.columns(3)
+    st.write("### Enter Current Live Game Indicators")
 
-    with col1:
+    input_col1, input_col2, input_col3 = st.columns(3)
+
+    with input_col1:
         current_minutes = st.slider("Current minutes", 0.0, 60.0, 20.0, 0.5)
         current_points = st.slider("Current points", 0, 80, 10)
-        current_rebounds = st.slider("Current rebounds", 0, 30, 3)
 
-    with col2:
+    with input_col2:
+        current_rebounds = st.slider("Current rebounds", 0, 30, 3)
         current_assists = st.slider("Current assists", 0, 25, 3)
+
+    with input_col3:
         current_turnovers = st.slider("Current turnovers", 0, 12, 1)
         current_plus_minus = st.slider("Current plus-minus", -40, 40, 0)
 
-    with col3:
-        coach_concern = st.slider("Coach concern level", 1, 10, 5)
+    coach_concern = st.slider("Coach concern level", 1, 10, 5)
 
     live_result = live_game_decision(
         current_minutes=current_minutes,
@@ -1654,43 +1940,54 @@ elif tool_mode == "Live Game Monitor":
         baseline_minutes=scores["Season Avg Minutes"],
     )
 
-    col1, col2, col3 = st.columns(3)
+    st.write("### Live Game Summary")
 
-    col1.metric("Live Contribution", live_result["Live Contribution"])
-    col2.metric("Load Status", live_result["Load Status"])
-    col3.metric("Load Ratio", live_result["Load Ratio"])
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
 
-    if live_result["Alerts"]:
-        alert_text = "<br>".join(live_result["Alerts"])
+    with summary_col1:
+        report_card("Live Contribution", live_result["Live Contribution"])
+
+    with summary_col2:
+        report_card("Load Status", live_result["Load Status"])
+
+    with summary_col3:
+        report_card("Load Ratio", live_result["Load Ratio"])
+
+    alert_col1, alert_col2 = st.columns(2)
+
+    with alert_col1:
+        if live_result["Alerts"]:
+            alert_text = "<br>".join(live_result["Alerts"])
+            st.markdown(
+                f"""
+                <div class="amber-box">
+                    <b>Live Alerts:</b><br>
+                    {alert_text}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """
+                <div class="green-box">
+                    <b>Live Alerts:</b><br>
+                    No major live-game concern detected.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with alert_col2:
         st.markdown(
             f"""
-            <div class="amber-box">
-                <b>Live Alerts:</b><br>
-                {alert_text}
+            <div class="info-box">
+                <b>Live Coach Action:</b><br>
+                {live_result["Action"]}
             </div>
             """,
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown(
-            """
-            <div class="green-box">
-                <b>Live Alerts:</b><br>
-                No major live-game concern detected.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown(
-        f"""
-        <div class="info-box">
-            <b>Live Coach Action:</b><br>
-            {live_result["Action"]}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
     live_df = pd.DataFrame(
         {
@@ -1713,13 +2010,30 @@ elif tool_mode == "Live Game Monitor":
         }
     )
 
-    fig_live = px.bar(
-        live_df,
-        x="Metric",
-        y="Value",
-        title="Current Live Game Indicators",
-    )
-    st.plotly_chart(fig_live, use_container_width=True)
+    st.write("### Current Live Game Indicators")
+
+    chart_left, chart_center, chart_right = st.columns([1, 4, 1])
+
+    with chart_center:
+        fig_live = px.bar(
+            live_df,
+            x="Metric",
+            y="Value",
+            title="Current Live Game Indicators",
+            text="Value",
+        )
+
+        fig_live.update_layout(
+            xaxis_title="Metric",
+            yaxis_title="Value",
+            title_x=0.5,
+            height=520,
+            margin=dict(l=40, r=40, t=70, b=90),
+        )
+
+        fig_live.update_xaxes(tickangle=-35)
+
+        st.plotly_chart(fig_live, use_container_width=True)
 
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1752,12 +2066,43 @@ elif tool_mode == "Live Game Monitor":
 # Mode: Post-Game Report
 # ------------------------------------------------------------
 
-elif tool_mode == "Post-Game Report":
+if tool_mode == "Post-Game Report":
     st.subheader("Post-Game Report Mode")
     st.write(
         "This mode compares the latest entered game performance against the selected "
-        "player’s historical baseline and generates a coach-ready review."
+        "player’s historical baseline and generates a coach-ready post-game review."
     )
+
+    def post_game_card(title: str, value: str) -> None:
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#111827;
+                border:1px solid #374151;
+                border-radius:12px;
+                padding:16px 18px;
+                margin-bottom:12px;
+                min-height:110px;">
+                <div style="
+                    font-size:15px;
+                    color:#9CA3AF;
+                    margin-bottom:8px;
+                    font-weight:600;">
+                    {title}
+                </div>
+                <div style="
+                    font-size:24px;
+                    font-weight:700;
+                    color:#F9FAFB;
+                    line-height:1.25;
+                    white-space:normal;
+                    overflow-wrap:break-word;">
+                    {value}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     player_baseline = player_df.copy()
 
@@ -1769,6 +2114,8 @@ elif tool_mode == "Post-Game Report":
         "Plus-Minus": player_baseline["PlusMinus"].mean(),
         "Minutes": player_baseline["Minutes"].mean(),
     }
+
+    st.write("### Enter Latest Game Performance")
 
     col1, col2, col3 = st.columns(3)
 
@@ -1784,6 +2131,15 @@ elif tool_mode == "Post-Game Report":
         pg_turnovers = st.slider("Post-game turnovers", 0, 12, 2)
         pg_plus_minus = st.slider("Post-game plus-minus", -40, 40, 0)
 
+    latest = {
+        "Points": pg_points,
+        "Rebounds": pg_rebounds,
+        "Assists": pg_assists,
+        "Turnovers": pg_turnovers,
+        "Plus-Minus": pg_plus_minus,
+        "Minutes": pg_minutes,
+    }
+
     post_result = post_game_impact(
         pg_minutes=pg_minutes,
         pg_points=pg_points,
@@ -1794,12 +2150,23 @@ elif tool_mode == "Post-Game Report":
         baseline=baseline,
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    st.write("### Post-Game Summary")
 
-    col1.metric("Game Production", post_result["Game Production"])
-    col2.metric("Game Impact", post_result["Game Impact"])
-    col3.metric("Workload", post_result["Workload"])
-    col4.metric("Efficiency Flag", post_result["Efficiency Flag"])
+    summary_col1, summary_col2 = st.columns(2)
+
+    with summary_col1:
+        post_game_card("Game Production", str(post_result["Game Production"]))
+
+    with summary_col2:
+        post_game_card("Game Impact", post_result["Game Impact"])
+
+    summary_col3, summary_col4 = st.columns(2)
+
+    with summary_col3:
+        post_game_card("Workload", post_result["Workload"])
+
+    with summary_col4:
+        post_game_card("Efficiency Flag", post_result["Efficiency Flag"])
 
     st.markdown(
         f"""
@@ -1810,15 +2177,6 @@ elif tool_mode == "Post-Game Report":
         """,
         unsafe_allow_html=True,
     )
-
-    latest = {
-        "Points": pg_points,
-        "Rebounds": pg_rebounds,
-        "Assists": pg_assists,
-        "Turnovers": pg_turnovers,
-        "Plus-Minus": pg_plus_minus,
-        "Minutes": pg_minutes,
-    }
 
     comparison_df = pd.DataFrame(
         {
@@ -1835,16 +2193,51 @@ elif tool_mode == "Post-Game Report":
     comparison_df["Player Average"] = comparison_df["Player Average"].round(1)
 
     st.write("### Latest Game vs Player Average")
+    st.write(
+        "This chart compares the latest entered game with the selected player's normal "
+        "historical baseline. It helps the coach see whether the player performed above "
+        "or below their usual level."
+    )
 
     fig_compare = px.bar(
         comparison_df,
         x="Metric",
         y=["Latest Game", "Player Average"],
         barmode="group",
-        title="Post-Game Comparison Against Player Baseline",
+        title="Latest Game Compared With Player Average",
     )
+
+    fig_compare.update_layout(
+        xaxis_title="Performance Metric",
+        yaxis_title="Value",
+        legend_title="Comparison",
+    )
+
     st.plotly_chart(fig_compare, use_container_width=True)
 
+    st.write("### Difference From Player Baseline")
+    st.write(
+        "This chart shows how far the latest game was above or below the player's "
+        "normal average. Positive values show above-baseline performance; negative "
+        "values show below-baseline performance."
+    )
+
+    fig_difference = px.bar(
+        comparison_df,
+        x="Metric",
+        y="Difference",
+        text="Difference",
+        title="Latest Game Difference From Player Average",
+    )
+
+    fig_difference.update_layout(
+        xaxis_title="Performance Metric",
+        yaxis_title="Difference From Average",
+    )
+
+    st.plotly_chart(fig_difference, use_container_width=True)
+
+    st.write("### Baseline Comparison Table")
     st.dataframe(comparison_df, use_container_width=True)
 
     decision_rows = []
@@ -1854,7 +2247,7 @@ elif tool_mode == "Post-Game Report":
             {
                 "Area": "Workload",
                 "Signal": "Minutes above player average",
-                "Coach Action": "Consider recovery-focused follow-up or monitor next-game load.",
+                "Coach Action": "Monitor next-game minutes or consider recovery-focused follow-up.",
             }
         )
     elif pg_minutes < baseline["Minutes"] * 0.85:
@@ -1862,7 +2255,7 @@ elif tool_mode == "Post-Game Report":
             {
                 "Area": "Workload",
                 "Signal": "Minutes below player average",
-                "Coach Action": "Review role, involvement, or tactical usage.",
+                "Coach Action": "Review role, involvement level, or tactical usage.",
             }
         )
     else:
@@ -1879,7 +2272,7 @@ elif tool_mode == "Post-Game Report":
             {
                 "Area": "Efficiency",
                 "Signal": "Turnovers above player average",
-                "Coach Action": "Review ball security and decision-making.",
+                "Coach Action": "Review ball security, shot decisions, and possession quality.",
             }
         )
     else:
@@ -1898,20 +2291,53 @@ elif tool_mode == "Post-Game Report":
         + baseline["Plus-Minus"]
     )
 
-    if post_result["Game Production"] > baseline_production:
+    if post_result["Game Production"] > baseline_production * 1.15:
         decision_rows.append(
             {
                 "Area": "Performance Impact",
-                "Signal": "Production above player average",
-                "Coach Action": "Maintain role or involvement level.",
+                "Signal": "Production clearly above player average",
+                "Coach Action": "Maintain or increase involvement if matchup context supports it.",
+            }
+        )
+    elif post_result["Game Production"] < baseline_production * 0.85:
+        decision_rows.append(
+            {
+                "Area": "Performance Impact",
+                "Signal": "Production below player average",
+                "Coach Action": "Review role, matchup, recent form, and support structure.",
             }
         )
     else:
         decision_rows.append(
             {
                 "Area": "Performance Impact",
-                "Signal": "Production below player average",
-                "Coach Action": "Review role, matchup, or recent form trend.",
+                "Signal": "Production near player average",
+                "Coach Action": "Maintain current role and monitor next-game trend.",
+            }
+        )
+
+    if pg_plus_minus < baseline["Plus-Minus"] - 5:
+        decision_rows.append(
+            {
+                "Area": "Lineup Impact",
+                "Signal": "Plus-minus below normal baseline",
+                "Coach Action": "Review lineup combinations and matchup exposure.",
+            }
+        )
+    elif pg_plus_minus > baseline["Plus-Minus"] + 5:
+        decision_rows.append(
+            {
+                "Area": "Lineup Impact",
+                "Signal": "Plus-minus above normal baseline",
+                "Coach Action": "Consider whether current lineup combinations are effective.",
+            }
+        )
+    else:
+        decision_rows.append(
+            {
+                "Area": "Lineup Impact",
+                "Signal": "Plus-minus close to normal baseline",
+                "Coach Action": "No major lineup impact concern from this game.",
             }
         )
 
@@ -1919,6 +2345,58 @@ elif tool_mode == "Post-Game Report":
 
     st.write("### Coach-Ready Decision Summary")
     st.dataframe(coach_decision_df, use_container_width=True)
+
+    signal_strength = []
+
+    for row in decision_rows:
+        signal_text = row["Signal"].lower()
+
+        if (
+            "clearly above" in signal_text
+            or "above normal" in signal_text
+            or "above player average" in signal_text
+        ):
+            signal_value = 1
+        elif (
+            "below" in signal_text
+            or "turnovers above" in signal_text
+            or "concern" in signal_text
+        ):
+            signal_value = -1
+        else:
+            signal_value = 0
+
+        signal_strength.append(
+            {
+                "Area": row["Area"],
+                "Signal Score": signal_value,
+                "Signal": row["Signal"],
+            }
+        )
+
+    signal_df = pd.DataFrame(signal_strength)
+
+    st.write("### Coach Signal Overview")
+    st.write(
+        "This chart summarises the post-game coaching signals. Positive values suggest "
+        "a favourable signal, negative values suggest a review area, and zero indicates "
+        "a neutral or normal signal."
+    )
+
+    fig_signal = px.bar(
+        signal_df,
+        x="Area",
+        y="Signal Score",
+        text="Signal",
+        title="Post-Game Coach Signal Overview",
+    )
+
+    fig_signal.update_layout(
+        xaxis_title="Coaching Area",
+        yaxis_title="Signal Direction",
+    )
+
+    st.plotly_chart(fig_signal, use_container_width=True)
 
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
