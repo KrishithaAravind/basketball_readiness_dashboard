@@ -1,5 +1,6 @@
 import os
 import base64
+import html
 from datetime import datetime
 
 import numpy as np
@@ -834,6 +835,99 @@ def mode_help_text(mode: str) -> str:
         "Live Game Monitor": "What this mode helps with: guiding tactical choices during the game using live context.",
         "Post-Game Report": "What this mode helps with: turning the latest game into a next-step action plan.",
     }.get(mode, "")
+
+
+def render_wrapped_html_table(df, column_widths=None, height=420):
+    # Streamlit st.dataframe does not reliably auto-wrap long documentation text.
+    # This helper renders documentation methodology tables as HTML so full sentences remain readable.
+    if df is None or df.empty:
+        st.info("No documentation table available.")
+        return
+
+    safe_df = df.copy()
+    headers = list(safe_df.columns)
+
+    def _clean(value):
+        if pd.isna(value):
+            return ""
+        return html.escape(str(value)).replace("\n", "<br>")
+
+    colgroup_html = ""
+    if column_widths:
+        widths = [column_widths.get(col, None) for col in headers]
+        if any(widths):
+            colgroup_html = "<colgroup>" + "".join(
+                f'<col style="width:{w};">' if w else "<col>"
+                for w in widths
+            ) + "</colgroup>"
+
+    header_html = "".join(f"<th>{html.escape(str(col))}</th>" for col in headers)
+    body_rows = []
+    for _, row in safe_df.iterrows():
+        cells = "".join(f"<td>{_clean(row[col])}</td>" for col in headers)
+        body_rows.append(f"<tr>{cells}</tr>")
+
+    table_html = f"""
+    <style>
+    .wrapped-table-container {{
+        width: 100%;
+        max-height: {height}px;
+        overflow-x: auto;
+        overflow-y: auto;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 8px;
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+        background: #0E1117;
+    }}
+
+    .wrapped-doc-table {{
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: fixed;
+        font-size: 0.90rem;
+    }}
+
+    .wrapped-doc-table th {{
+        text-align: left;
+        font-weight: 700;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: normal;
+        vertical-align: top;
+        background: #1A1C24;
+        color: #F9FAFB;
+    }}
+
+    .wrapped-doc-table td {{
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: normal;
+        vertical-align: top;
+        line-height: 1.35;
+        color: #E5E7EB;
+        background: #0E1117;
+    }}
+
+    .wrapped-doc-table tr:last-child td {{
+        border-bottom: none;
+    }}
+    </style>
+    <div class="wrapped-table-container">
+        <table class="wrapped-doc-table">
+            {colgroup_html}
+            <thead><tr>{header_html}</tr></thead>
+            <tbody>
+                {''.join(body_rows)}
+            </tbody>
+        </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 def workload_alert(scores: dict) -> tuple:
@@ -1739,7 +1833,7 @@ if tool_mode == "Documentation / Interpretation":
                 {"Workload Ratio Range": "Above 1.30", "Workload Balance Score": 55, "Interpretation": "Very high workload"},
             ]
         )
-        st.dataframe(workload_table, use_container_width=True)
+        st.dataframe(workload_table, use_container_width=True, hide_index=True)
         st.write(
             "The workload score does not simply reward more minutes. It rewards a stable workload compared with the player’s own usual role."
         )
@@ -1764,7 +1858,11 @@ if tool_mode == "Documentation / Interpretation":
                 },
             ]
         )
-        st.dataframe(validation_df, use_container_width=True)
+        render_wrapped_html_table(
+            validation_df,
+            column_widths={"Example": "24%", "Expected interpretation": "76%"},
+            height=260,
+        )
 
     st.write("### Metric Focus Weight Profiles")
     focus_df = pd.DataFrame(
@@ -1806,7 +1904,7 @@ if tool_mode == "Documentation / Interpretation":
             },
         ]
     )
-    st.dataframe(focus_df, use_container_width=True)
+    st.dataframe(focus_df, use_container_width=True, hide_index=True)
 
     st.write("### Readiness Thresholds")
     threshold_df = pd.DataFrame(
@@ -1833,7 +1931,7 @@ if tool_mode == "Documentation / Interpretation":
             },
         ]
     )
-    st.dataframe(threshold_df, use_container_width=True)
+    st.dataframe(threshold_df, use_container_width=True, hide_index=True)
     st.info(
         "These thresholds are interpreted relative to the player’s own baseline. A high score means the player is performing strongly compared with their expected role. It does not mean the player is the best player on the team."
     )
@@ -1841,6 +1939,80 @@ if tool_mode == "Documentation / Interpretation":
     st.write("### Important Interpretation Note")
     st.warning(
         "A low-minute or specialist player can receive a strong readiness score if they are performing well compared with their normal role. Equally, a high-minute starter can receive a lower score if recent form, efficiency, consistency, or workload balance drops below their usual baseline. The score supports coach judgement rather than replacing it."
+    )
+
+    st.write("### Team Selection Fit Methodology")
+    st.info(
+        "Team Selection Fit is a team-context ranking. It does not compare a player only against their own baseline. Instead, it compares players against one another inside the selected team and adjusts for role, average minutes, games played, production per minute, and workload stability. This makes the ranking more useful for coach selection decisions because it highlights who is the best current fit for the team situation."
+    )
+    team_fit_method_df = pd.DataFrame(
+        [
+            {
+                "Step": "1. Classify role",
+                "How it works": "The app assigns a role such as Scorer, Playmaker, Rebounder / Interior, Floor Spacer, Stabiliser, or Balanced Contributor using points, rebounds, assists, shooting, turnovers, plus-minus, and minutes.",
+            },
+            {
+                "Step": "2. Standardise inside the team",
+                "How it works": "Metrics such as points per minute, rebounds per minute, assists per minute, plus-minus, minutes, and games played are compared within the selected team so the ranking is team-relative rather than player-relative.",
+            },
+            {
+                "Step": "3. Weight role-relevant strengths",
+                "How it works": "Each role emphasizes the metrics that matter most for that role. For example, rebounders are judged more on rebounding, interior efficiency, plus-minus, and usage than on three-point shooting.",
+            },
+            {
+                "Step": "4. Combine into a selection score",
+                "How it works": "The final Team Selection Fit Score blends role-adjusted performance, recent form, coach usage, workload stability, and consistency into a 0 to 100 score.",
+            },
+            {
+                "Step": "5. Selection Fit formula",
+                "How it works": "Team Selection Fit Score = 35% Role-Adjusted Performance + 20% Recent Form + 20% Coach Usage + 15% Workload Stability + 10% Consistency.",
+            },
+        ]
+    )
+    render_wrapped_html_table(
+        team_fit_method_df,
+        column_widths={"Step": "20%", "How it works": "80%"},
+        height=420,
+    )
+    st.write(
+        "Interpretation: a higher Team Selection Fit Score means the player is currently a stronger team selection option for the selected squad and context. It is not a personal readiness score and it is not intended to penalise specialists for metrics that are less important to their role."
+    )
+
+    st.write("### Live Scenario Fit Interpretation")
+    st.info(
+        "Live Scenario Fit takes the team selection view one step further by matching the current game situation to the players who best fit that exact need. The app uses the current score situation, tactical need, live game indicators, and the player or team role profile to rank the best tactical options for the moment."
+    )
+    live_fit_method_df = pd.DataFrame(
+        [
+            {
+                "Step": "1. Read the game state",
+                "How it works": "The coach selects the score situation, tactical need, game phase, rebound deficit, three-point problem level, and opponent momentum.",
+            },
+            {
+                "Step": "2. Start from team fit",
+                "How it works": "The app begins with Team Selection Fit so the live ranking still respects actual team usage, role, and historical contribution.",
+            },
+            {
+                "Step": "3. Apply scenario boosts",
+                "How it works": "Players gain extra credit when their role matches the live need, such as scoring in a deficit, stabilising in a lead, or helping ball movement when the team needs control.",
+            },
+            {
+                "Step": "4. Surface the top tactical option",
+                "How it works": "The highest Live Situation Fit score becomes the main recommendation card, with a caution note when the player is not clearly the best fit or the sample is limited.",
+            },
+            {
+                "Step": "5. Scenario Fit formula",
+                "How it works": "Live Situation Fit Score = Team Selection Fit Score plus scenario boosts from role match, score situation, live tactical need, and current game pressure, capped to 0 to 100.",
+            },
+        ]
+    )
+    render_wrapped_html_table(
+        live_fit_method_df,
+        column_widths={"Step": "20%", "How it works": "80%"},
+        height=420,
+    )
+    st.write(
+        "Interpretation: a high Live Situation Fit score means the player is a strong tactical option for the current game scenario based on team context and historical patterns. The coach can use it to support a live decision, not as an automatic command."
     )
 
     st.write("### How the score supports coaching decisions")
@@ -2193,7 +2365,11 @@ elif tool_mode == "Player Profile":
             ]
         )
 
-        st.dataframe(decision_df, use_container_width=True)
+        render_wrapped_html_table(
+            decision_df,
+            column_widths={"Area": "22%", "Signal": "30%", "Coach Action": "48%"},
+            height=300,
+        )
 
         player_profile_df = player_summary["Player Data"].tail(recent_window).copy()
 
@@ -2362,7 +2538,11 @@ elif tool_mode == "Pre-Game Readiness":
         ]
     )
 
-    st.dataframe(coach_df, use_container_width=True)
+    render_wrapped_html_table(
+        coach_df,
+        column_widths={"Area": "22%", "Signal": "30%", "Coach Action": "48%"},
+        height=300,
+    )
 
     st.write("### Recent Performance Context")
 
