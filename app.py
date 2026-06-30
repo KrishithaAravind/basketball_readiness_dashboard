@@ -616,6 +616,19 @@ def clamp_score(value: float, lower: float = 0, upper: float = 100) -> float:
     return round(max(lower, min(upper, value)), 1)
 
 
+def safe_mean(series: pd.Series) -> float:
+    if series is None:
+        return 0.0
+    value = pd.to_numeric(series, errors="coerce").mean()
+    return 0.0 if pd.isna(value) else float(value)
+
+
+def safe_div(numerator: float, denominator: float) -> float:
+    if pd.isna(numerator) or pd.isna(denominator) or denominator == 0:
+        return 0.0
+    return float(numerator) / float(denominator)
+
+
 def calculate_workload_score(workload_ratio: float) -> float:
     if pd.isna(workload_ratio) or np.isinf(workload_ratio):
         return 60
@@ -775,7 +788,7 @@ def readiness_label(score: float) -> str:
     elif score >= 65:
         return "Monitor"
     elif score >= 50:
-        return "Manage Minutes"
+        return "Manage Minutes / Controlled Role"
     else:
         return "Review Before Selection"
 
@@ -784,6 +797,8 @@ def card_class(status: str) -> str:
     if status == "High Readiness":
         return "green-box"
     elif status in ["Monitor", "Manage Minutes"]:
+        return "amber-box"
+    elif status == "Manage Minutes / Controlled Role":
         return "amber-box"
     else:
         return "red-box"
@@ -795,9 +810,20 @@ def rotation_recommendation(score: float) -> str:
     elif score >= 65:
         return "Use normally, but monitor key alerts"
     elif score >= 50:
-        return "Manage minutes or consider reduced role"
+        return "Manage minutes / controlled role"
     else:
         return "Review before major involvement"
+
+
+def readiness_interpretation_text(mode_note: str) -> str:
+    return (
+        "Readiness Score interpretation: This score is relative to the selected player’s own "
+        "performance baseline. It compares recent form, efficiency, consistency, and workload "
+        "balance against how this player usually performs in the selected season. A high score "
+        "means the player is currently performing well compared with their expected role. It "
+        "does not mean the player is better than every other player. "
+        + mode_note
+    )
 
 
 def workload_alert(scores: dict) -> tuple:
@@ -999,6 +1025,231 @@ def calculate_team_player_table(team_df: pd.DataFrame, recent_window: int) -> pd
         return pd.DataFrame()
 
     return pd.DataFrame(rows).sort_values("Readiness Score", ascending=False)
+
+
+def safe_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def percentile_score(series: pd.Series, value, inverse: bool = False) -> float:
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    if clean.empty or pd.isna(value):
+        return 50.0
+    if clean.nunique() <= 1:
+        return 50.0
+    # Use count of values at or below the target for a stable 0-100 percentile-like score.
+    pct = float((clean.le(value).mean()) * 100)
+    if inverse:
+        pct = 100 - pct
+    return pct
+
+
+def classify_player_role(player_row_or_df):
+    if isinstance(player_row_or_df, pd.DataFrame):
+        row = player_row_or_df.iloc[-1]
+    else:
+        row = player_row_or_df
+
+    points_pm = float(row.get("Points Per Minute", 0) or 0)
+    rebounds_pm = float(row.get("Rebounds Per Minute", 0) or 0)
+    assists_pm = float(row.get("Assists Per Minute", 0) or 0)
+    turnovers_pm = float(row.get("Turnovers Per Minute", 0) or 0)
+    three_pct = float(row.get("ThreePointPct", 0) or 0)
+    fg_pct = float(row.get("FieldGoalPct", 0) or 0)
+    plus_minus = float(row.get("PlusMinus", 0) or 0)
+    avg_minutes = float(row.get("Avg Minutes", 0) or 0)
+
+    if rebounds_pm >= max(0.12, assists_pm * 0.9) and (three_pct <= 25 or three_pct == 0):
+        return "Rebounder / Interior"
+    if three_pct >= 33 and points_pm >= 0.25:
+        return "Floor Spacer"
+    if assists_pm >= max(0.12, rebounds_pm) and turnovers_pm <= 0.10:
+        return "Playmaker"
+    if points_pm >= 0.28 and fg_pct >= 45:
+        return "Scorer"
+    if plus_minus >= 0 and turnovers_pm <= 0.12 and avg_minutes >= 18:
+        return "Stabiliser"
+    return "Balanced Contributor"
+
+
+def suggested_team_use(role: str) -> str:
+    mapping = {
+        "Scorer": "Use when the team needs shot creation or quick scoring.",
+        "Playmaker": "Use when the team needs ball movement and controlled possessions.",
+        "Rebounder / Interior": "Use when rebounding, interior presence, or efficient finishing is the priority.",
+        "Floor Spacer": "Use to improve spacing and three-point threat.",
+        "Stabiliser": "Use to protect structure, reduce mistakes, and stabilise impact.",
+        "Balanced Contributor": "Use as a flexible option across multiple lineup needs.",
+    }
+    return mapping.get(role, "Use as a flexible lineup option.")
+
+
+def calculate_team_selection_fit(team_df: pd.DataFrame, recent_window: int = 10) -> pd.DataFrame:
+    if team_df.empty:
+        return pd.DataFrame()
+
+    team_df = team_df.copy()
+    if "Production" not in team_df.columns:
+        team_df["Production"] = (
+            safe_series(team_df, "Points").fillna(0)
+            + safe_series(team_df, "Rebounds").fillna(0)
+            + safe_series(team_df, "Assists").fillna(0)
+            + safe_series(team_df, "PlusMinus").fillna(0)
+        )
+
+    rows = []
+    for player in sorted(team_df["Player"].dropna().unique()):
+        player_data = team_df[team_df["Player"] == player].sort_values("Date").copy()
+        if player_data.empty:
+            continue
+
+        recent_data = player_data.tail(min(recent_window, len(player_data)))
+        minutes = safe_series(player_data, "Minutes").fillna(0)
+        recent_minutes = safe_series(recent_data, "Minutes").fillna(0)
+        production = safe_series(player_data, "Production").fillna(0)
+        recent_production = safe_series(recent_data, "Production").fillna(0)
+        points = safe_series(player_data, "Points").fillna(0)
+        rebounds = safe_series(player_data, "Rebounds").fillna(0)
+        assists = safe_series(player_data, "Assists").fillna(0)
+        turnovers = safe_series(player_data, "Turnovers").fillna(0)
+        plus_minus = safe_series(player_data, "PlusMinus").fillna(0)
+        fg = safe_series(player_data, "FieldGoalPct")
+        three = safe_series(player_data, "ThreePointPct")
+
+        total_minutes = minutes.sum()
+        total_recent_minutes = recent_minutes.sum()
+
+        ppm = safe_div(points.sum(), total_minutes)
+        rpm = safe_div(rebounds.sum(), total_minutes)
+        apm = safe_div(assists.sum(), total_minutes)
+        tovpm = safe_div(turnovers.sum(), total_minutes)
+        prodpm = safe_div(production.sum(), total_minutes)
+        recent_prodpm = safe_div(recent_production.sum(), total_recent_minutes)
+        season_prodpm = prodpm
+        recent_minutes_avg = safe_mean(recent_minutes)
+        season_minutes_avg = safe_mean(minutes)
+
+        role = classify_player_role(
+            {
+                "Points Per Minute": ppm,
+                "Rebounds Per Minute": rpm,
+                "Assists Per Minute": apm,
+                "Turnovers Per Minute": tovpm,
+                "ThreePointPct": safe_mean(three) if len(three.dropna()) > 0 else 0,
+                "FieldGoalPct": safe_mean(fg) if len(fg.dropna()) > 0 else 0,
+                "PlusMinus": safe_mean(plus_minus),
+                "Avg Minutes": season_minutes_avg,
+            }
+        )
+
+        if role == "Scorer":
+            perf = (
+                0.35 * percentile_score(team_df.groupby("Player")["Points"].mean(), points.mean())
+                + 0.30 * percentile_score(team_df.groupby("Player")["Production"].mean(), production.mean())
+                + 0.20 * percentile_score(team_df.groupby("Player")["FieldGoalPct"].mean(), safe_mean(fg))
+                + 0.15 * percentile_score(team_df.groupby("Player")["ThreePointPct"].mean(), safe_mean(three))
+            )
+            main_strength = "Shot creation and scoring"
+        elif role == "Playmaker":
+            perf = (
+                0.35 * percentile_score(team_df.groupby("Player")["Assists"].mean(), assists.mean())
+                + 0.25 * percentile_score(team_df.groupby("Player")["Turnovers"].mean(), turnovers.mean(), inverse=True)
+                + 0.20 * percentile_score(team_df.groupby("Player")["PlusMinus"].mean(), safe_mean(plus_minus))
+                + 0.20 * percentile_score(team_df.groupby("Player")["Production"].mean(), production.mean())
+            )
+            main_strength = "Ball movement"
+        elif role == "Rebounder / Interior":
+            perf = (
+                0.40 * percentile_score(team_df.groupby("Player")["Rebounds"].mean(), rebounds.mean())
+                + 0.25 * percentile_score(team_df.groupby("Player")["FieldGoalPct"].mean(), safe_mean(fg))
+                + 0.20 * percentile_score(team_df.groupby("Player")["PlusMinus"].mean(), safe_mean(plus_minus))
+                + 0.15 * percentile_score(team_df.groupby("Player")["Production"].mean(), production.mean())
+            )
+            main_strength = "Rebounding and interior impact"
+        elif role == "Floor Spacer":
+            perf = (
+                0.40 * percentile_score(team_df.groupby("Player")["ThreePointPct"].mean(), safe_mean(three))
+                + 0.25 * percentile_score(team_df.groupby("Player")["Points"].mean(), points.mean())
+                + 0.20 * percentile_score(team_df.groupby("Player")["FieldGoalPct"].mean(), safe_mean(fg))
+                + 0.15 * percentile_score(team_df.groupby("Player")["PlusMinus"].mean(), safe_mean(plus_minus))
+            )
+            main_strength = "Spacing and shooting threat"
+        elif role == "Stabiliser":
+            perf = (
+                0.35 * percentile_score(team_df.groupby("Player")["PlusMinus"].mean(), safe_mean(plus_minus))
+                + 0.25 * percentile_score(team_df.groupby("Player")["Turnovers"].mean(), turnovers.mean(), inverse=True)
+                + 0.20 * percentile_score(team_df.groupby("Player")["Production"].mean(), production.mean())
+                + 0.20 * percentile_score(team_df.groupby("Player")["Minutes"].mean(), season_minutes_avg)
+            )
+            main_strength = "Structure and low-error impact"
+        else:
+            perf = (
+                0.30 * percentile_score(team_df.groupby("Player")["Production"].mean(), production.mean())
+                + 0.25 * percentile_score(team_df.groupby("Player")["PlusMinus"].mean(), safe_mean(plus_minus))
+                + 0.25 * percentile_score(team_df.groupby("Player")["Minutes"].mean(), season_minutes_avg)
+                + 0.20 * percentile_score(team_df.groupby("Player")["Rebounds"].mean(), rebounds.mean() + assists.mean())
+            )
+            main_strength = "Two-way flexibility"
+
+        team_players = team_df.groupby("Player")
+        avg_minutes_pct = percentile_score(team_players["Minutes"].mean(), season_minutes_avg)
+        games_played = len(player_data)
+        games_pct = percentile_score(team_players.size(), games_played)
+        coach_usage = 0.60 * avg_minutes_pct + 0.40 * games_pct
+
+        recent_prodpm_pct = percentile_score(team_players["Production"].mean(), recent_prodpm)
+        season_prodpm_pct = percentile_score(team_players["Production"].mean(), season_prodpm)
+        recent_form = clamp_score(0.5 * recent_prodpm_pct + 0.5 * season_prodpm_pct)
+
+        if season_minutes_avg > 0:
+            workload_ratio = recent_minutes_avg / season_minutes_avg
+        else:
+            workload_ratio = 1
+        if 0.85 <= workload_ratio <= 1.15:
+            workload_stability = 100
+        elif 0.70 <= workload_ratio < 0.85 or 1.15 < workload_ratio <= 1.30:
+            workload_stability = 75
+        elif workload_ratio < 0.70:
+            workload_stability = 60
+        else:
+            workload_stability = 55
+
+        consistency_std = production.tail(min(recent_window, len(production))).std()
+        if pd.isna(consistency_std):
+            consistency_std = 0.0
+        consistency_score = clamp_score(100 - (consistency_std * 1.5))
+
+        role_adj = clamp_score(perf)
+        fit_score = clamp_score(
+            0.35 * role_adj
+            + 0.20 * recent_form
+            + 0.20 * coach_usage
+            + 0.15 * workload_stability
+            + 0.10 * consistency_score
+        )
+
+        rows.append(
+            {
+                "Player": player,
+                "Role": role,
+                "Team Selection Fit Score": round(fit_score, 1),
+                "Avg Minutes": round(season_minutes_avg, 1),
+                "Games Played": games_played,
+                "Production Per Minute": round(prodpm, 3),
+                "Main Strength": main_strength,
+                "Coach Usage Score": round(coach_usage, 1),
+                "Role-Adjusted Performance": round(role_adj, 1),
+                "Suggested Team Use": suggested_team_use(role),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
+    return result.sort_values("Team Selection Fit Score", ascending=False)
 
 
 # ------------------------------------------------------------
@@ -1224,25 +1475,100 @@ if tool_mode == "Documentation / Interpretation":
 
     st.write("### Tool Purpose")
     st.write(
-        "The Basketball Performance Readiness Dashboard is a coach-facing sports "
-        "analytics tool designed to support player selection, rotation planning, "
-        "workload review, and post-game performance interpretation."
+        "The Basketball Performance Readiness Dashboard is a coach-facing sports analytics tool designed to support player selection, rotation planning, workload review, and post-game performance interpretation."
     )
 
-    st.write("### Default Readiness Formula")
-
-    st.code(
-        """
-Readiness Score =
-30% Recent Form
-+ 25% Efficiency
-+ 25% Consistency
-+ 20% Workload Balance
-        """
+    st.write("### Readiness Score Methodology")
+    st.info(
+        "The Readiness Score is a player-relative performance-readiness index. It compares a player’s recent output against that player’s own season baseline. It is designed to support coach-facing decisions around selection, role planning, workload support, and post-game review. It is not an absolute ranking of player quality and it is not an injury or medical prediction model."
     )
 
-    st.write("### Metric Focus Profiles")
+    st.write("### Variables Used")
+    variables_df = pd.DataFrame(
+        [
+            {
+                "Component": "Recent Form",
+                "Variables Used": "Points, Rebounds, Assists, PlusMinus, Production",
+                "Purpose": "Measures whether recent output is above or below the player’s normal baseline.",
+            },
+            {
+                "Component": "Efficiency",
+                "Variables Used": "FieldGoalPct, ThreePointPct, FreeThrowPct, Turnovers",
+                "Purpose": "Measures shooting quality and possession control.",
+            },
+            {
+                "Component": "Consistency",
+                "Variables Used": "Production over recent games",
+                "Purpose": "Measures stability of recent output.",
+            },
+            {
+                "Component": "Workload Balance",
+                "Variables Used": "Minutes",
+                "Purpose": "Measures whether recent minutes are stable compared with the player’s normal role.",
+            },
+        ]
+    )
+    st.dataframe(variables_df, use_container_width=True)
 
+    with st.expander("Readiness Score formulas", expanded=True):
+        st.write("### Production Calculation")
+        st.write(
+            "If the dataset does not already include Production, the app creates it as a simple box-score style indicator."
+        )
+        st.code("Production = Points + Rebounds + Assists + PlusMinus")
+        st.write(
+            "If Production is missing in the imported data, the app uses that formula before building the readiness components."
+        )
+
+        st.write("### Recent Form Formula")
+        st.code(
+            "Recent Form Score = Recent Average Production / Season Average Production × 100"
+        )
+        st.write(
+            "Recent Average Production is the average Production over the selected recent-game window. Season Average Production is the average Production over the selected season. A score of 100 means the player is matching their normal production baseline. Above 100 means recent production is above baseline, but the final score is capped at 100. Below 100 means recent production is below baseline."
+        )
+
+        st.write("### Efficiency Formula")
+        st.code(
+            "Efficiency Score = 40% FieldGoalPct + 25% ThreePointPct + 20% FreeThrowPct + 15% Turnover Control"
+        )
+        st.code("Turnover Control = 100 - Average Turnovers × 12")
+        st.write(
+            "Higher shooting percentages improve the score. More turnovers reduce the turnover control component. If a percentage column is missing, the app handles it safely and uses the available metrics."
+        )
+
+        st.write("### Consistency Formula")
+        st.code("Coefficient of Variation = Standard Deviation of Recent Production / Average Recent Production")
+        st.code("Consistency Score = 100 - Coefficient of Variation × 100")
+        st.write(
+            "Stable production across recent games creates a higher score. Highly variable production creates a lower score. Consistency does not mean games played; it means stability of output in the selected recent window."
+        )
+
+        st.write("### Workload Balance Formula")
+        st.code("Workload Ratio = Recent Average Minutes / Season Average Minutes")
+        workload_table = pd.DataFrame(
+            [
+                {"Workload Ratio Range": "0.85-1.15", "Workload Balance Score": 100, "Interpretation": "Stable workload"},
+                {"Workload Ratio Range": "0.70-0.84", "Workload Balance Score": 75, "Interpretation": "Reduced involvement"},
+                {"Workload Ratio Range": "1.16-1.30", "Workload Balance Score": 75, "Interpretation": "Elevated workload"},
+                {"Workload Ratio Range": "Below 0.70", "Workload Balance Score": 60, "Interpretation": "Very low involvement"},
+                {"Workload Ratio Range": "Above 1.30", "Workload Balance Score": 55, "Interpretation": "Very high workload"},
+            ]
+        )
+        st.dataframe(workload_table, use_container_width=True)
+        st.write(
+            "The workload score does not simply reward more minutes. It rewards a stable workload compared with the player’s own usual role."
+        )
+
+        st.write("### Final Readiness Score")
+        st.code(
+            "Readiness Score = Recent Form Weight × Recent Form Score + Efficiency Weight × Efficiency Score + Consistency Weight × Consistency Score + Workload Weight × Workload Balance Score"
+        )
+        st.write(
+            "The final score combines the component scores using the selected Metric Focus."
+        )
+
+    st.write("### Metric Focus Weight Profiles")
     focus_df = pd.DataFrame(
         [
             {
@@ -1282,74 +1608,51 @@ Readiness Score =
             },
         ]
     )
-
     st.dataframe(focus_df, use_container_width=True)
 
-    st.write("### Component Meaning")
-
-    component_explainer = pd.DataFrame(
+    st.write("### Readiness Thresholds")
+    threshold_df = pd.DataFrame(
         [
             {
-                "Component": "Recent Form",
-                "Meaning": "Compares recent production with the player's normal baseline.",
+                "Score Range": "80-100",
+                "Threshold": "High Readiness",
+                "Interpretation": "Above or close to the player’s strongest recent role level.",
             },
             {
-                "Component": "Efficiency",
-                "Meaning": "Uses shooting efficiency and turnover control.",
+                "Score Range": "65-79",
+                "Threshold": "Monitor",
+                "Interpretation": "One or more components need attention.",
             },
             {
-                "Component": "Consistency",
-                "Meaning": "Measures stability of recent production.",
-            },
-            {
-                "Component": "Workload Balance",
-                "Meaning": "Compares recent minutes with the player's normal minutes baseline.",
-            },
-        ]
-    )
-
-    st.dataframe(component_explainer, use_container_width=True)
-
-    st.write("### Why Game Participation Is Not Weighted")
-    st.info(
-        "Game participation is shown as context only. It is not included in the readiness "
-        "score because the cleaned dataset focuses on player-game rows where minutes were "
-        "recorded. Including it as a weighted metric would add limited analytical value."
-    )
-
-    st.write("### Readiness Categories")
-
-    category_df = pd.DataFrame(
-        [
-            {
-                "Score Range": "80–100",
-                "Category": "High Readiness",
-                "Coach Meaning": "Suitable for normal or high involvement.",
-            },
-            {
-                "Score Range": "65–79",
-                "Category": "Monitor",
-                "Coach Meaning": "Available, but check alerts.",
-            },
-            {
-                "Score Range": "50–64",
-                "Category": "Manage Minutes",
-                "Coach Meaning": "Reduced role or close monitoring may be appropriate.",
+                "Score Range": "50-64",
+                "Threshold": "Manage Minutes / Controlled Role",
+                "Interpretation": "Role or workload should be managed.",
             },
             {
                 "Score Range": "Below 50",
-                "Category": "Review Before Selection",
-                "Coach Meaning": "Review before major involvement.",
+                "Threshold": "Review Before Selection",
+                "Interpretation": "Recent indicators are below expected baseline.",
             },
         ]
     )
+    st.dataframe(threshold_df, use_container_width=True)
+    st.info(
+        "These thresholds are interpreted relative to the player’s own baseline. A high score means the player is performing strongly compared with their expected role. It does not mean the player is the best player on the team."
+    )
 
-    st.dataframe(category_df, use_container_width=True)
+    st.write("### Important Interpretation Note")
+    st.warning(
+        "A low-minute or specialist player can receive a strong readiness score if they are performing well compared with their normal role. Equally, a high-minute starter can receive a lower score if recent form, efficiency, consistency, or workload balance drops below their usual baseline. The score supports coach judgement rather than replacing it."
+    )
+
+    st.write("### How the score supports coaching decisions")
+    st.write(
+        "Use the score to support selection and role planning before the next game, to contextualise live tactical decisions, and to guide post-game follow-up on training, film review, and role adjustment."
+    )
 
     st.write("### Important Limitation")
     st.warning(
-        "This tool is not a medical or injury prediction model. It uses basketball "
-        "game-log indicators to support performance-readiness decisions."
+        "This tool is not a medical or injury prediction model. It uses basketball game-log indicators to support performance-readiness decisions."
     )
 
     st.stop()
@@ -1541,41 +1844,65 @@ if tool_mode == "Team Overview":
         else:
             st.dataframe(recent_games, use_container_width=True)
 
-        st.write("### Team Player Readiness Ranking")
-
-        player_table = calculate_team_player_table(
-            team_summary["Team Data"],
-            recent_window,
+        st.write("### Team Selection Fit Ranking")
+        st.info(
+            "Team Selection Fit is different from the individual Readiness Score. Individual readiness compares a player against their own baseline. Team Selection Fit compares players within the team context and adjusts for role, average minutes, games played, and role-specific strengths. This avoids unfairly penalising specialists, such as rebounders or interior players, for metrics that are less central to their role."
         )
 
-        if player_table.empty:
-            st.warning("Not enough player data to calculate team readiness ranking.")
-        else:
-            st.dataframe(player_table, use_container_width=True)
+        st.write("### How Team Selection Fit is calculated")
+        st.write(
+            "Team Selection Fit is a team-context ranking. Unlike the individual Readiness Score, which compares each player to their own baseline, this ranking compares players within the selected team and adjusts for role. It includes role-adjusted performance, recent form, coach usage, workload stability, and consistency. This avoids unfairly penalising specialists for metrics that are not central to their role."
+        )
 
-            top_players = player_table.head(5)
+        team_fit_table = calculate_team_selection_fit(team_summary["Team Data"], recent_window)
+
+        if team_fit_table.empty:
+            st.warning("Not enough player data to calculate team selection fit ranking.")
+        else:
+            display_table = team_fit_table.copy()
+            display_table.insert(0, "Rank", range(1, len(display_table) + 1))
+            st.dataframe(
+                display_table[
+                    [
+                        "Rank",
+                        "Player",
+                        "Role",
+                        "Team Selection Fit Score",
+                        "Avg Minutes",
+                        "Games Played",
+                        "Production Per Minute",
+                        "Main Strength",
+                        "Coach Usage Score",
+                        "Role-Adjusted Performance",
+                        "Suggested Team Use",
+                    ]
+                ],
+                use_container_width=True,
+            )
+
+            top_players = display_table.head(5)
 
             fig_players = px.bar(
                 top_players,
                 x="Player",
-                y="Readiness Score",
-                text="Readiness Score",
-                title="Top 5 Player Readiness Scores",
+                y="Team Selection Fit Score",
+                text="Team Selection Fit Score",
+                title="Top 5 Team Selection Fit Scores",
+                hover_data={
+                    "Role": True,
+                    "Avg Minutes": ":.1f",
+                    "Games Played": True,
+                    "Main Strength": True,
+                },
             )
             st.plotly_chart(fig_players, use_container_width=True)
 
-            monitor_count = (player_table["Status"] != "High Readiness").sum()
-
-            if monitor_count == 0:
-                team_insight = (
-                    "Team readiness profile is strong. No major player-level "
-                    "readiness concerns detected."
-                )
+            usage_leaders = (team_fit_table["Coach Usage Score"] >= 70).sum()
+            if usage_leaders == 0:
+                team_insight = "No major selection-fit leaders were detected from the current team sample."
             else:
                 team_insight = (
-                    f"{monitor_count} player(s) are currently flagged as Monitor, "
-                    "Manage Minutes, or Review Before Selection. Coaching staff should "
-                    "review workload, efficiency, and consistency indicators."
+                    f"{usage_leaders} player(s) are currently strong team selection options based on role fit, usage, workload stability, and recent form."
                 )
 
             st.markdown(
@@ -1588,10 +1915,15 @@ if tool_mode == "Team Overview":
                 unsafe_allow_html=True,
             )
 
+            st.markdown("### Team Selection Fit Method Note")
+            st.caption(
+                "The table is team-standardised, so it compares players inside the selected team rather than comparing each player only to their own baseline. Specialists are not penalised for irrelevant role metrics such as three-point shooting when those metrics are not central to their role."
+            )
+
             fixed_download_link(
-                data=player_table.to_csv(index=False).encode("utf-8"),
-                file_name=f"{selected_team}_team_readiness_table.csv",
-                label="Download Team CSV",
+                data=display_table.to_csv(index=False).encode("utf-8"),
+                file_name=f"{selected_team}_team_selection_fit_table.csv",
+                label="Download Team Selection Fit CSV",
             )
 
 
@@ -1769,6 +2101,15 @@ elif tool_mode == "Pre-Game Readiness":
 
     st.markdown(
         f"""
+        <div class="info-box">
+            <b>Readiness Score interpretation:</b> {readiness_interpretation_text("Use this to support selection and role planning before the next game.")}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
         <div class="{card_class(status)}">
             <b>Rotation Recommendation:</b> {rotation_action}<br>
             <b>Final Coach Action:</b> {coach_action}
@@ -1916,16 +2257,58 @@ elif tool_mode == "Live Game Monitor":
     input_col1, input_col2, input_col3 = st.columns(3)
 
     with input_col1:
-        current_minutes = st.slider("Current minutes", 0.0, 60.0, 20.0, 0.5)
-        current_points = st.slider("Current points", 0, 80, 10)
+        current_minutes = st.slider(
+            "Current minutes",
+            min_value=0,
+            max_value=80,
+            value=0,
+            step=1,
+            help="Range allows regulation and rare overtime scenarios.",
+        )
+        current_points = st.slider(
+            "Current points",
+            min_value=0,
+            max_value=110,
+            value=0,
+            step=1,
+            help="Range based on NBA single-game scoring record plus buffer.",
+        )
 
     with input_col2:
-        current_rebounds = st.slider("Current rebounds", 0, 30, 3)
-        current_assists = st.slider("Current assists", 0, 25, 3)
+        current_rebounds = st.slider(
+            "Current rebounds",
+            min_value=0,
+            max_value=65,
+            value=0,
+            step=1,
+            help="Range based on NBA single-game rebounding record plus buffer.",
+        )
+        current_assists = st.slider(
+            "Current assists",
+            min_value=0,
+            max_value=40,
+            value=0,
+            step=1,
+            help="Range based on NBA single-game assist record plus buffer.",
+        )
 
     with input_col3:
-        current_turnovers = st.slider("Current turnovers", 0, 12, 1)
-        current_plus_minus = st.slider("Current plus-minus", -40, 40, 0)
+        current_turnovers = st.slider(
+            "Current turnovers",
+            min_value=0,
+            max_value=25,
+            value=0,
+            step=1,
+            help="Range allows unusually high turnover games without being unrealistic.",
+        )
+        current_plus_minus = st.slider(
+            "Current plus-minus",
+            min_value=-70,
+            max_value=70,
+            value=0,
+            step=1,
+            help="Range covers historical positive and negative plus-minus extremes plus buffer.",
+        )
 
     coach_concern = st.slider("Coach concern level", 1, 10, 5)
 
