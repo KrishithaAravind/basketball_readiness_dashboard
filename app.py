@@ -1323,6 +1323,184 @@ def live_game_decision(
     }
 
 
+def get_minute_impact_pattern(player_data: pd.DataFrame, recent_window: int = 10) -> dict:
+    df = player_data.copy()
+    if df.empty or "Minutes" not in df.columns:
+        return {
+            "Pattern": "Limited sample",
+            "Summary": "Not enough game data to judge how the player responds to higher minutes.",
+            "Caution": "Limited historical sample size.",
+        }
+
+    df = df.sort_values("Date").copy()
+    if "Production" not in df.columns:
+        df["Production"] = (
+            pd.to_numeric(df.get("Points"), errors="coerce").fillna(0)
+            + pd.to_numeric(df.get("Rebounds"), errors="coerce").fillna(0)
+            + pd.to_numeric(df.get("Assists"), errors="coerce").fillna(0)
+            - pd.to_numeric(df.get("Turnovers"), errors="coerce").fillna(0)
+        )
+
+    recent_df = df.tail(max(3, min(recent_window, len(df)))).copy()
+    if recent_df.empty:
+        return {
+            "Pattern": "Limited sample",
+            "Summary": "Not enough recent games to measure a minute-impact pattern.",
+            "Caution": "Limited recent sample size.",
+        }
+
+    low_minutes = recent_df[recent_df["Minutes"] < 30]
+    high_minutes = recent_df[recent_df["Minutes"] >= 30]
+
+    def _ppm(frame: pd.DataFrame) -> float:
+        minutes = frame["Minutes"].sum()
+        production = frame["Production"].sum()
+        return round(production / minutes, 3) if minutes else 0.0
+
+    def _tovpm(frame: pd.DataFrame) -> float:
+        minutes = frame["Minutes"].sum()
+        turnovers = pd.to_numeric(frame.get("Turnovers"), errors="coerce").fillna(0).sum()
+        return round(turnovers / minutes, 3) if minutes else 0.0
+
+    def _fg(frame: pd.DataFrame) -> float:
+        if "FieldGoalPct" not in frame.columns:
+            return 0.0
+        return round(pd.to_numeric(frame["FieldGoalPct"], errors="coerce").fillna(0).mean(), 1)
+
+    low_ppm = _ppm(low_minutes)
+    high_ppm = _ppm(high_minutes)
+    low_tov = _tovpm(low_minutes)
+    high_tov = _tovpm(high_minutes)
+    low_fg = _fg(low_minutes)
+    high_fg = _fg(high_minutes)
+
+    trend_points = []
+    if len(high_minutes) >= 2 or len(low_minutes) >= 2:
+        if high_ppm > low_ppm + 0.05:
+            trend_points.append("production per minute improves in 30+ minute games")
+        elif high_ppm < low_ppm - 0.05:
+            trend_points.append("production per minute drops in 30+ minute games")
+        else:
+            trend_points.append("production per minute stays fairly stable as minutes rise")
+
+        if high_tov > low_tov + 0.03:
+            trend_points.append("turnovers per minute rise when the player is used longer")
+        elif high_tov < low_tov - 0.03:
+            trend_points.append("turnovers per minute stay controlled in longer stints")
+
+        if high_fg and low_fg and abs(high_fg - low_fg) >= 3:
+            if high_fg < low_fg:
+                trend_points.append("shooting efficiency is slightly lower in higher-minute games")
+            else:
+                trend_points.append("shooting efficiency holds up in higher-minute games")
+
+    if not trend_points:
+        pattern = "Limited pattern"
+        summary = "The recent sample is too small to make a strong minute-impact read."
+    else:
+        pattern = " / ".join(trend_points[:2]).title()
+        summary = " ".join(
+            [
+                f"Recent games suggest this player {trend_points[0]}."
+                if trend_points
+                else "",
+                f"{' '.join(trend_points[1:])}." if len(trend_points) > 1 else "",
+            ]
+        ).strip()
+
+    caution = "Limited sample size." if len(recent_df) < 5 else "Based on recent games only, not a guarantee."
+    return {
+        "Pattern": pattern,
+        "Summary": summary,
+        "Caution": caution,
+        "High Minutes PPM": round(high_ppm, 3),
+        "Low Minutes PPM": round(low_ppm, 3),
+        "High Minutes TOV/Min": round(high_tov, 3),
+        "Low Minutes TOV/Min": round(low_tov, 3),
+        "High Minutes FG%": high_fg,
+        "Low Minutes FG%": low_fg,
+    }
+
+
+def get_live_situation_fit(team_df: pd.DataFrame, tactical_need: str, score_situation: str, coach_concern: int, recent_window: int = 10) -> pd.DataFrame:
+    if team_df.empty:
+        return pd.DataFrame()
+
+    base = calculate_team_selection_fit(team_df, recent_window=recent_window)
+    if base.empty:
+        return base
+
+    base = base.copy()
+
+    need_boosts = {
+        "Quick scoring": {"Scorer": 8, "Floor Spacer": 5, "Balanced Contributor": 3},
+        "Protect lead": {"Stabiliser": 10, "Playmaker": 4},
+        "Improve rebounding": {"Rebounder / Interior": 10, "Stabiliser": 3},
+        "Improve 3PT spacing": {"Floor Spacer": 10, "Scorer": 4},
+        "Improve ball movement": {"Playmaker": 10, "Balanced Contributor": 4},
+        "Reduce turnovers": {"Stabiliser": 10, "Playmaker": 5},
+        "Stabilise defence/impact": {"Stabiliser": 10, "Rebounder / Interior": 4},
+        "Respond to opponent run": {"Stabiliser": 8, "Playmaker": 4, "Balanced Contributor": 3},
+    }
+
+    situation_boosts = {
+        "Leading": {"Stabiliser": 4, "Playmaker": 2},
+        "Tied": {"Balanced Contributor": 3, "Stabiliser": 3},
+        "Down 1-5": {"Playmaker": 3, "Scorer": 3},
+        "Down 6-10": {"Scorer": 5, "Floor Spacer": 3},
+        "Down 11+": {"Scorer": 6, "Floor Spacer": 4},
+    }
+
+    concern_boost = max(0, coach_concern - 5)
+    for idx, row in base.iterrows():
+        role = row.get("Role", "Balanced Contributor")
+        tactical_bonus = need_boosts.get(tactical_need, {}).get(role, 0)
+        situation_bonus = situation_boosts.get(score_situation, {}).get(role, 0)
+        role_power = 0
+        if tactical_need == "Quick scoring" and role == "Scorer":
+            role_power = 0.25 * row.get("Production Per Minute", 0)
+        elif tactical_need == "Protect lead" and role == "Stabiliser":
+            role_power = 0.25 * row.get("Coach Usage Score", 0)
+        elif tactical_need == "Improve rebounding" and role == "Rebounder / Interior":
+            role_power = 0.25 * row.get("Production Per Minute", 0)
+        elif tactical_need == "Improve 3PT spacing" and role == "Floor Spacer":
+            role_power = 0.25 * row.get("Role-Adjusted Performance", 0)
+        elif tactical_need == "Improve ball movement" and role == "Playmaker":
+            role_power = 0.25 * row.get("Role-Adjusted Performance", 0)
+        elif tactical_need == "Reduce turnovers" and role == "Stabiliser":
+            role_power = 0.25 * row.get("Role-Adjusted Performance", 0)
+        elif tactical_need == "Stabilise defence/impact" and role == "Stabiliser":
+            role_power = 0.25 * row.get("Role-Adjusted Performance", 0)
+        elif tactical_need == "Respond to opponent run" and role in {"Stabiliser", "Playmaker"}:
+            role_power = 0.2 * row.get("PlusMinus", 0)
+
+        readiness_bonus = 0
+        if "Readiness Score" in row.index:
+            readiness_bonus = 0.12 * row.get("Readiness Score", 0)
+        elif "Team Selection Fit Score" in row:
+            readiness_bonus = 0.12 * row.get("Team Selection Fit Score", 0)
+
+        if score_situation in {"Down 6-10", "Down 11+"} and role == "Scorer":
+            readiness_bonus += 3
+
+        base.loc[idx, "Live Situation Fit"] = clamp_score(
+            row.get("Team Selection Fit Score", 0)
+            + tactical_bonus
+            + situation_bonus
+            + role_power
+            + readiness_bonus
+            + concern_boost,
+            0,
+            100,
+        )
+
+    base = base.sort_values(
+        ["Live Situation Fit", "Team Selection Fit Score"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+    return base
+
+
 def post_game_impact(
     pg_minutes: float,
     pg_points: int,
@@ -2298,6 +2476,53 @@ elif tool_mode == "Live Game Monitor":
             help="Range covers historical positive and negative plus-minus extremes plus buffer.",
         )
 
+    st.write("### Live Game Situation")
+    situation_col1, situation_col2, situation_col3 = st.columns(3)
+
+    with situation_col1:
+        game_phase = st.selectbox(
+            "Game phase",
+            [
+                "Pre-game",
+                "Q1",
+                "Q2",
+                "Halftime",
+                "Q3",
+                "Q4",
+                "Late Game",
+            ],
+        )
+        score_situation = st.selectbox(
+            "Score situation",
+            [
+                "Leading",
+                "Tied",
+                "Down 1-5",
+                "Down 6-10",
+                "Down 11+",
+            ],
+        )
+
+    with situation_col2:
+        tactical_need = st.selectbox(
+            "Tactical need",
+            [
+                "Quick scoring",
+                "Protect lead",
+                "Improve rebounding",
+                "Improve 3PT spacing",
+                "Improve ball movement",
+                "Reduce turnovers",
+                "Stabilise defence/impact",
+                "Respond to opponent run",
+            ],
+        )
+        opponent_momentum = st.slider("Opponent momentum level", 1, 10, 5)
+
+    with situation_col3:
+        rebound_deficit = st.slider("Rebound deficit", 0, 20, 0)
+        three_pt_problem = st.slider("3PT problem level", 1, 10, 5)
+
     coach_concern = st.slider("Coach concern level", 1, 10, 5)
 
     live_result = live_game_decision(
@@ -2311,7 +2536,57 @@ elif tool_mode == "Live Game Monitor":
         baseline_minutes=scores["Season Avg Minutes"],
     )
 
+    minute_pattern = get_minute_impact_pattern(player_df, recent_window=recent_window)
+    live_fit_df = get_live_situation_fit(
+        team_filtered_data,
+        tactical_need=tactical_need,
+        score_situation=score_situation,
+        coach_concern=coach_concern,
+        recent_window=recent_window,
+    )
+
+    tactical_summary = None
+    if not live_fit_df.empty:
+        top_fit = live_fit_df.iloc[0]
+        selected_row = live_fit_df.loc[live_fit_df["Player"] == selected_player]
+        selected_fit = float(selected_row.iloc[0]["Live Situation Fit"]) if not selected_row.empty else None
+
+        tactical_role = top_fit.get("Role", "Balanced Contributor")
+        fit_reason = top_fit.get("Suggested Team Use", "This player is a useful tactical option.")
+        caution_text = []
+        if selected_fit is not None and selected_fit + 5 < float(top_fit["Live Situation Fit"]):
+            caution_text.append(f"{selected_player} is not the top fit for this scenario right now.")
+        if minute_pattern["Caution"]:
+            caution_text.append(minute_pattern["Caution"])
+        if opponent_momentum >= 8:
+            caution_text.append("Opponent momentum is high, so favour a stabilising or ball-control option.")
+        if rebound_deficit >= 5 and tactical_need != "Improve rebounding":
+            caution_text.append("The rebound deficit suggests rebounding may need more attention.")
+        if three_pt_problem >= 7 and tactical_need != "Improve 3PT spacing":
+            caution_text.append("The 3PT problem level suggests spacing or shot quality may need a change.")
+
+        tactical_summary = {
+            "Best Player Option": top_fit["Player"],
+            "Tactical Role": tactical_role,
+            "Why This Fits": fit_reason,
+            "Caution": " ".join(caution_text) if caution_text else "Use this as a tactical option, not an automatic instruction.",
+            "Live Situation Fit": round(float(top_fit["Live Situation Fit"]), 1),
+        }
+
     st.write("### Main Tactical Response")
+
+    if tactical_summary:
+        st.markdown(
+            f"""
+            <div class="info-box">
+                <b>Best Player Option:</b> {tactical_summary["Best Player Option"]}<br>
+                <b>Tactical Role:</b> {tactical_summary["Tactical Role"]}<br>
+                <b>Why this fits:</b> {tactical_summary["Why This Fits"]}<br>
+                <b>Caution:</b> {tactical_summary["Caution"]}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     summary_col1, summary_col2, summary_col3 = st.columns(3)
 
@@ -2323,6 +2598,31 @@ elif tool_mode == "Live Game Monitor":
 
     with summary_col3:
         report_card("Load Ratio", live_result["Load Ratio"])
+
+    pattern_col1, pattern_col2 = st.columns(2)
+
+    with pattern_col1:
+        st.markdown(
+            f"""
+            <div class="info-box">
+                <b>Minute-to-Impact Pattern:</b><br>
+                {minute_pattern["Summary"]}<br>
+                <b>Pattern:</b> {minute_pattern["Pattern"]}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with pattern_col2:
+        st.markdown(
+            f"""
+            <div class="amber-box">
+                <b>Live Tactical Instruction:</b><br>
+                {tactical_summary["Why This Fits"] if tactical_summary else "No tactical fit available from the current sample."}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     alert_col1, alert_col2 = st.columns(2)
 
@@ -2360,6 +2660,43 @@ elif tool_mode == "Live Game Monitor":
             unsafe_allow_html=True,
         )
 
+    if not live_fit_df.empty:
+        st.write("### Situation-Based Player Fit")
+        st.caption(
+            "This ranking uses the selected live need, current score situation, team role fit, and the player readiness context to highlight the best tactical options."
+        )
+        live_fit_display = live_fit_df.head(5).copy()
+        live_fit_display.insert(0, "Rank", range(1, len(live_fit_display) + 1))
+        st.dataframe(
+            live_fit_display[
+                [
+                    "Rank",
+                    "Player",
+                    "Role",
+                    "Live Situation Fit",
+                    "Team Selection Fit Score",
+                    "Coach Usage Score",
+                    "Production Per Minute",
+                    "Suggested Team Use",
+                ]
+            ],
+            use_container_width=True,
+        )
+
+        fig_live_fit = px.bar(
+            live_fit_display,
+            x="Player",
+            y="Live Situation Fit",
+            text="Live Situation Fit",
+            title="Top Tactical Fits for Current Scenario",
+            hover_data={
+                "Role": True,
+                "Suggested Team Use": True,
+                "Coach Usage Score": ":.1f",
+            },
+        )
+        st.plotly_chart(fig_live_fit, use_container_width=True)
+
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Mode": tool_mode,
@@ -2373,11 +2710,22 @@ elif tool_mode == "Live Game Monitor":
         "Current Assists": current_assists,
         "Current Turnovers": current_turnovers,
         "Current PlusMinus": current_plus_minus,
+        "Game Phase": game_phase,
+        "Score Situation": score_situation,
+        "Tactical Need": tactical_need,
+        "Opponent Momentum": opponent_momentum,
+        "Rebound Deficit": rebound_deficit,
+        "3PT Problem Level": three_pt_problem,
         "Coach Concern": coach_concern,
         "Live Contribution": live_result["Live Contribution"],
         "Load Status": live_result["Load Status"],
         "Load Ratio": live_result["Load Ratio"],
         "Action": live_result["Action"],
+        "Best Player Option": tactical_summary["Best Player Option"] if tactical_summary else "",
+        "Tactical Role": tactical_summary["Tactical Role"] if tactical_summary else "",
+        "Why This Fits": tactical_summary["Why This Fits"] if tactical_summary else "",
+        "Caution": tactical_summary["Caution"] if tactical_summary else "",
+        "Live Situation Fit": tactical_summary["Live Situation Fit"] if tactical_summary else "",
     }
 
     fixed_download_link(
