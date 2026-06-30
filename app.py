@@ -826,6 +826,16 @@ def readiness_interpretation_text(mode_note: str) -> str:
     )
 
 
+def mode_help_text(mode: str) -> str:
+    return {
+        "Team Overview": "What this mode helps with: comparing team selection options and current lineup fit.",
+        "Player Profile": "What this mode helps with: reviewing one player's season profile and recent form.",
+        "Pre-Game Readiness": "What this mode helps with: supporting selection and role planning before the next game.",
+        "Live Game Monitor": "What this mode helps with: guiding tactical choices during the game using live context.",
+        "Post-Game Report": "What this mode helps with: turning the latest game into a next-step action plan.",
+    }.get(mode, "")
+
+
 def workload_alert(scores: dict) -> tuple:
     ratio = scores["Workload Ratio"]
 
@@ -992,41 +1002,6 @@ def get_player_summary(df: pd.DataFrame, player: str) -> dict:
     }
 
 
-def calculate_team_player_table(team_df: pd.DataFrame, recent_window: int) -> pd.DataFrame:
-    rows = []
-
-    for player in sorted(team_df["Player"].dropna().unique()):
-        player_data = team_df[team_df["Player"] == player].copy()
-
-        if len(player_data) < 3:
-            continue
-
-        window = min(recent_window, len(player_data))
-        scores = calculate_scores(player_data, window, "All-round")
-
-        rows.append(
-            {
-                "Player": player,
-                "Games": len(player_data),
-                "Avg Minutes": round(player_data["Minutes"].mean(), 1),
-                "PPG": round(player_data["Points"].mean(), 1),
-                "RPG": round(player_data["Rebounds"].mean(), 1),
-                "APG": round(player_data["Assists"].mean(), 1),
-                "FG%": round(player_data["FieldGoalPct"].mean(), 1),
-                "3P%": round(player_data["ThreePointPct"].mean(), 1),
-                "Turnovers": round(player_data["Turnovers"].mean(), 1),
-                "PlusMinus": round(player_data["PlusMinus"].mean(), 1),
-                "Readiness Score": scores["Readiness Score"],
-                "Status": readiness_label(scores["Readiness Score"]),
-            }
-        )
-
-    if not rows:
-        return pd.DataFrame()
-
-    return pd.DataFrame(rows).sort_values("Readiness Score", ascending=False)
-
-
 def safe_series(df: pd.DataFrame, column: str) -> pd.Series:
     if column not in df.columns:
         return pd.Series(dtype=float)
@@ -1072,6 +1047,37 @@ def classify_player_role(player_row_or_df):
     if plus_minus >= 0 and turnovers_pm <= 0.12 and avg_minutes >= 18:
         return "Stabiliser"
     return "Balanced Contributor"
+
+
+def role_logic_summary() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Role": "Scorer",
+                "Primary signals": "Points per minute, production per minute, FG%, 3PT% if relevant",
+            },
+            {
+                "Role": "Playmaker",
+                "Primary signals": "Assists per minute, turnover control, plus-minus, production",
+            },
+            {
+                "Role": "Rebounder / Interior",
+                "Primary signals": "Rebounds per minute, FG%, plus-minus, production",
+            },
+            {
+                "Role": "Floor Spacer",
+                "Primary signals": "3PT%, points per minute, FG%, plus-minus",
+            },
+            {
+                "Role": "Stabiliser",
+                "Primary signals": "Plus-minus, low turnovers, consistency, minutes",
+            },
+            {
+                "Role": "Balanced Contributor",
+                "Primary signals": "Production, plus-minus, minutes, multi-category stability",
+            },
+        ]
+    )
 
 
 def suggested_team_use(role: str) -> str:
@@ -1567,6 +1573,20 @@ if tool_mode == "Documentation / Interpretation":
         st.write(
             "The final score combines the component scores using the selected Metric Focus."
         )
+        st.write("### Validation Examples")
+        validation_df = pd.DataFrame(
+            [
+                {
+                    "Example": "Specialist rebounder",
+                    "Expected interpretation": "A player with strong rebounds, minutes, and interior efficiency can score well even if 3PT% is low or zero, because the role logic does not over-weight spacing for that role.",
+                },
+                {
+                    "Example": "High-minute starter with poor recent form",
+                    "Expected interpretation": "A starter can score lower if recent production, consistency, or workload stability falls below the season baseline, even if the season averages remain strong.",
+                },
+            ]
+        )
+        st.dataframe(validation_df, use_container_width=True)
 
     st.write("### Metric Focus Weight Profiles")
     focus_df = pd.DataFrame(
@@ -1848,10 +1868,8 @@ if tool_mode == "Team Overview":
         st.info(
             "Team Selection Fit is different from the individual Readiness Score. Individual readiness compares a player against their own baseline. Team Selection Fit compares players within the team context and adjusts for role, average minutes, games played, and role-specific strengths. This avoids unfairly penalising specialists, such as rebounders or interior players, for metrics that are less central to their role."
         )
-
-        st.write("### How Team Selection Fit is calculated")
-        st.write(
-            "Team Selection Fit is a team-context ranking. Unlike the individual Readiness Score, which compares each player to their own baseline, this ranking compares players within the selected team and adjusts for role. It includes role-adjusted performance, recent form, coach usage, workload stability, and consistency. This avoids unfairly penalising specialists for metrics that are not central to their role."
+        st.caption(
+            "Team Selection Fit is a team-context ranking that compares players inside the selected team and adjusts for role, usage, workload stability, and consistency."
         )
 
         team_fit_table = calculate_team_selection_fit(team_summary["Team Data"], recent_window)
@@ -1859,6 +1877,14 @@ if tool_mode == "Team Overview":
         if team_fit_table.empty:
             st.warning("Not enough player data to calculate team selection fit ranking.")
         else:
+            st.caption(mode_help_text("Team Overview"))
+            st.info(
+                "Team Selection Fit is a team-context view. It compares players within the selected team, adjusts for role, and highlights who is currently the strongest fit for selection."
+            )
+            with st.expander("How the role logic works", expanded=False):
+                st.caption("The app classifies each player into a role, then emphasizes the metrics that matter most for that role.")
+                st.dataframe(role_logic_summary(), use_container_width=True)
+
             display_table = team_fit_table.copy()
             display_table.insert(0, "Rank", range(1, len(display_table) + 1))
             st.dataframe(
@@ -1897,27 +1923,20 @@ if tool_mode == "Team Overview":
             )
             st.plotly_chart(fig_players, use_container_width=True)
 
-            usage_leaders = (team_fit_table["Coach Usage Score"] >= 70).sum()
-            if usage_leaders == 0:
-                team_insight = "No major selection-fit leaders were detected from the current team sample."
-            else:
-                team_insight = (
-                    f"{usage_leaders} player(s) are currently strong team selection options based on role fit, usage, workload stability, and recent form."
-                )
+            top_player = display_table.iloc[0]
+            team_insight = (
+                f"Top fit: {top_player['Player']} ({top_player['Role']}) with a score of {top_player['Team Selection Fit Score']}. "
+                f"This is the clearest current selection option in the team context."
+            )
 
             st.markdown(
                 f"""
                 <div class="info-box">
-                    <b>Team Insight:</b><br>
+                    <b>Main Coach Takeaway:</b><br>
                     {team_insight}
                 </div>
                 """,
                 unsafe_allow_html=True,
-            )
-
-            st.markdown("### Team Selection Fit Method Note")
-            st.caption(
-                "The table is team-standardised, so it compares players inside the selected team rather than comparing each player only to their own baseline. Specialists are not penalised for irrelevant role metrics such as three-point shooting when those metrics are not central to their role."
             )
 
             fixed_download_link(
@@ -1933,10 +1952,7 @@ if tool_mode == "Team Overview":
 
 elif tool_mode == "Player Profile":
     st.subheader("Player Profile Mode")
-    st.write(
-        "This mode provides a dedicated player dashboard with season averages, "
-        "recent form, workload, efficiency, and readiness context."
-    )
+    st.caption(mode_help_text("Player Profile"))
 
     player_summary = get_player_summary(team_filtered_data, selected_player)
 
@@ -1969,8 +1985,7 @@ elif tool_mode == "Player Profile":
         )
 
         st.info(
-            f"Current metric focus: {metric_focus}. "
-            "This changes the readiness score weighting for the selected player."
+            f"Current metric focus: {metric_focus}. This changes the readiness score weighting for the selected player."
         )
 
         st.write("### Coach Decision Layer")
@@ -2015,27 +2030,6 @@ elif tool_mode == "Player Profile":
         )
         st.plotly_chart(fig_profile, use_container_width=True)
 
-        st.write("### Workload Trend")
-
-        fig_minutes = px.bar(
-            player_profile_df,
-            x="Date",
-            y="Minutes",
-            title=f"{selected_player}: Recent Minutes",
-        )
-        st.plotly_chart(fig_minutes, use_container_width=True)
-
-        st.write("### Shooting Efficiency")
-
-        fig_efficiency = px.line(
-            player_profile_df,
-            x="Date",
-            y=["FieldGoalPct", "ThreePointPct", "FreeThrowPct"],
-            markers=True,
-            title=f"{selected_player}: Shooting Efficiency",
-        )
-        st.plotly_chart(fig_efficiency, use_container_width=True)
-
         st.write("### Recent Game Log")
         st.dataframe(player_profile_df, use_container_width=True)
 
@@ -2073,10 +2067,7 @@ elif tool_mode == "Player Profile":
 
 elif tool_mode == "Pre-Game Readiness":
     st.subheader("Pre-Game Readiness Mode")
-    st.write(
-        "This mode supports pre-game selection, rotation, and workload decisions "
-        "using recent form, efficiency, consistency, and workload balance."
-    )
+    st.caption(mode_help_text("Pre-Game Readiness"))
 
     col1, col2, col3 = st.columns([1.2, 1, 1])
 
@@ -2247,10 +2238,7 @@ elif tool_mode == "Pre-Game Readiness":
 
 elif tool_mode == "Live Game Monitor":
     st.subheader("Live Game Monitor Mode")
-    st.write(
-        "This mode uses quick manual inputs to support in-game monitoring. "
-        "It is designed for practical coach-facing use during a game."
-    )
+    st.caption(mode_help_text("Live Game Monitor"))
 
     st.write("### Enter Current Live Game Indicators")
 
@@ -2323,7 +2311,7 @@ elif tool_mode == "Live Game Monitor":
         baseline_minutes=scores["Season Avg Minutes"],
     )
 
-    st.write("### Live Game Summary")
+    st.write("### Main Tactical Response")
 
     summary_col1, summary_col2, summary_col3 = st.columns(3)
 
@@ -2372,52 +2360,6 @@ elif tool_mode == "Live Game Monitor":
             unsafe_allow_html=True,
         )
 
-    live_df = pd.DataFrame(
-        {
-            "Metric": [
-                "Points",
-                "Rebounds",
-                "Assists",
-                "Turnovers",
-                "Plus-Minus",
-                "Minutes",
-            ],
-            "Value": [
-                current_points,
-                current_rebounds,
-                current_assists,
-                current_turnovers,
-                current_plus_minus,
-                current_minutes,
-            ],
-        }
-    )
-
-    st.write("### Current Live Game Indicators")
-
-    chart_left, chart_center, chart_right = st.columns([1, 4, 1])
-
-    with chart_center:
-        fig_live = px.bar(
-            live_df,
-            x="Metric",
-            y="Value",
-            title="Current Live Game Indicators",
-            text="Value",
-        )
-
-        fig_live.update_layout(
-            xaxis_title="Metric",
-            yaxis_title="Value",
-            title_x=0.5,
-            height=520,
-            margin=dict(l=40, r=40, t=70, b=90),
-        )
-
-        fig_live.update_xaxes(tickangle=-35)
-
-        st.plotly_chart(fig_live, use_container_width=True)
-
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Mode": tool_mode,
@@ -2451,10 +2393,7 @@ elif tool_mode == "Live Game Monitor":
 
 if tool_mode == "Post-Game Report":
     st.subheader("Post-Game Report Mode")
-    st.write(
-        "This mode compares the latest entered game performance against the selected "
-        "player’s historical baseline and generates a coach-ready post-game review."
-    )
+    st.caption(mode_help_text("Post-Game Report"))
 
     def post_game_card(title: str, value: str) -> None:
         st.markdown(
@@ -2533,28 +2472,20 @@ if tool_mode == "Post-Game Report":
         baseline=baseline,
     )
 
-    st.write("### Post-Game Summary")
+    st.write("### Main Coach Recommendation")
 
     summary_col1, summary_col2 = st.columns(2)
 
     with summary_col1:
-        post_game_card("Game Production", str(post_result["Game Production"]))
-
-    with summary_col2:
         post_game_card("Game Impact", post_result["Game Impact"])
 
-    summary_col3, summary_col4 = st.columns(2)
-
-    with summary_col3:
-        post_game_card("Workload", post_result["Workload"])
-
-    with summary_col4:
-        post_game_card("Efficiency Flag", post_result["Efficiency Flag"])
+    with summary_col2:
+        post_game_card("Coach Action", post_result["Recommendation"])
 
     st.markdown(
         f"""
         <div class="info-box">
-            <b>Post-Game Coach Recommendation:</b><br>
+            <b>Coach Action:</b><br>
             {post_result["Recommendation"]}
         </div>
         """,
@@ -2576,10 +2507,8 @@ if tool_mode == "Post-Game Report":
     comparison_df["Player Average"] = comparison_df["Player Average"].round(1)
 
     st.write("### Latest Game vs Player Average")
-    st.write(
-        "This chart compares the latest entered game with the selected player's normal "
-        "historical baseline. It helps the coach see whether the player performed above "
-        "or below their usual level."
+    st.caption(
+        "The chart compares the latest entered game with the selected player's normal historical baseline."
     )
 
     fig_compare = px.bar(
@@ -2597,28 +2526,6 @@ if tool_mode == "Post-Game Report":
     )
 
     st.plotly_chart(fig_compare, use_container_width=True)
-
-    st.write("### Difference From Player Baseline")
-    st.write(
-        "This chart shows how far the latest game was above or below the player's "
-        "normal average. Positive values show above-baseline performance; negative "
-        "values show below-baseline performance."
-    )
-
-    fig_difference = px.bar(
-        comparison_df,
-        x="Metric",
-        y="Difference",
-        text="Difference",
-        title="Latest Game Difference From Player Average",
-    )
-
-    fig_difference.update_layout(
-        xaxis_title="Performance Metric",
-        yaxis_title="Difference From Average",
-    )
-
-    st.plotly_chart(fig_difference, use_container_width=True)
 
     st.write("### Baseline Comparison Table")
     st.dataframe(comparison_df, use_container_width=True)
@@ -2728,58 +2635,6 @@ if tool_mode == "Post-Game Report":
 
     st.write("### Coach-Ready Decision Summary")
     st.dataframe(coach_decision_df, use_container_width=True)
-
-    signal_strength = []
-
-    for row in decision_rows:
-        signal_text = row["Signal"].lower()
-
-        if (
-            "clearly above" in signal_text
-            or "above normal" in signal_text
-            or "above player average" in signal_text
-        ):
-            signal_value = 1
-        elif (
-            "below" in signal_text
-            or "turnovers above" in signal_text
-            or "concern" in signal_text
-        ):
-            signal_value = -1
-        else:
-            signal_value = 0
-
-        signal_strength.append(
-            {
-                "Area": row["Area"],
-                "Signal Score": signal_value,
-                "Signal": row["Signal"],
-            }
-        )
-
-    signal_df = pd.DataFrame(signal_strength)
-
-    st.write("### Coach Signal Overview")
-    st.write(
-        "This chart summarises the post-game coaching signals. Positive values suggest "
-        "a favourable signal, negative values suggest a review area, and zero indicates "
-        "a neutral or normal signal."
-    )
-
-    fig_signal = px.bar(
-        signal_df,
-        x="Area",
-        y="Signal Score",
-        text="Signal",
-        title="Post-Game Coach Signal Overview",
-    )
-
-    fig_signal.update_layout(
-        xaxis_title="Coaching Area",
-        yaxis_title="Signal Direction",
-    )
-
-    st.plotly_chart(fig_signal, use_container_width=True)
 
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
