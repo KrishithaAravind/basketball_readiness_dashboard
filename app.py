@@ -930,6 +930,10 @@ def render_wrapped_html_table(df, column_widths=None, height=420):
     st.markdown(table_html, unsafe_allow_html=True)
 
 
+def render_centered_chart(fig, left=1, center=5, right=1, use_container_width=True):
+    st.plotly_chart(fig, use_container_width=use_container_width)
+
+
 def workload_alert(scores: dict) -> tuple:
     ratio = scores["Workload Ratio"]
 
@@ -2210,7 +2214,12 @@ if tool_mode == "Team Overview":
                 color="Result",
                 title="Recent Game Margins",
             )
-            st.plotly_chart(fig_recent_games, use_container_width=True)
+            fig_recent_games.update_layout(
+                height=360,
+                margin=dict(l=30, r=30, t=60, b=70),
+                title_x=0.42,
+            )
+            render_centered_chart(fig_recent_games, left=1, center=4, right=1)
         else:
             st.dataframe(recent_games, use_container_width=True)
 
@@ -2271,7 +2280,8 @@ if tool_mode == "Team Overview":
                     "Main Strength": True,
                 },
             )
-            st.plotly_chart(fig_players, use_container_width=True)
+            fig_players.update_layout(height=360, margin=dict(l=30, r=30, t=60, b=90), title_x=0.42)
+            render_centered_chart(fig_players, left=1, center=4, right=1)
 
             top_player = display_table.iloc[0]
             team_insight = (
@@ -2382,7 +2392,8 @@ elif tool_mode == "Player Profile":
             markers=True,
             title=f"{selected_player}: Recent Performance Trend",
         )
-        st.plotly_chart(fig_profile, use_container_width=True)
+        fig_profile.update_layout(height=360, margin=dict(l=30, r=30, t=60, b=60), title_x=0.42)
+        render_centered_chart(fig_profile, left=1, center=5, right=1)
 
         st.write("### Recent Game Log")
         st.dataframe(player_profile_df, use_container_width=True)
@@ -2509,7 +2520,8 @@ elif tool_mode == "Pre-Game Readiness":
             text="Score",
             title="Readiness Component Scores",
         )
-        st.plotly_chart(fig_components, use_container_width=True)
+        fig_components.update_layout(height=340, margin=dict(l=30, r=30, t=60, b=60), title_x=0.42)
+        render_centered_chart(fig_components, left=1, center=5, right=1)
 
     st.write("### Coach Decision Layer")
 
@@ -2555,7 +2567,8 @@ elif tool_mode == "Pre-Game Readiness":
         markers=True,
         title=f"{selected_player}: Recent Production and Minutes",
     )
-    st.plotly_chart(fig_recent, use_container_width=True)
+    fig_recent.update_layout(height=340, margin=dict(l=30, r=30, t=60, b=60), title_x=0.42)
+    render_centered_chart(fig_recent, left=1, center=5, right=1)
 
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2875,7 +2888,8 @@ elif tool_mode == "Live Game Monitor":
                 "Coach Usage Score": ":.1f",
             },
         )
-        st.plotly_chart(fig_live_fit, use_container_width=True)
+        fig_live_fit.update_layout(height=360, margin=dict(l=30, r=30, t=60, b=90), title_x=0.42)
+        render_centered_chart(fig_live_fit, left=1, center=5, right=1)
 
     summary = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -3051,9 +3065,12 @@ if tool_mode == "Post-Game Report":
         xaxis_title="Performance Metric",
         yaxis_title="Value",
         legend_title="Comparison",
+        height=360,
+        margin=dict(l=30, r=30, t=60, b=60),
+        title_x=0.42,
     )
 
-    st.plotly_chart(fig_compare, use_container_width=True)
+    render_centered_chart(fig_compare, left=1, center=5, right=1)
 
     st.write("### Baseline Comparison Table")
     st.dataframe(comparison_df, use_container_width=True)
